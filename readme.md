@@ -1,6 +1,6 @@
 # My Translation App
 
-My Translation App is a local AI translation software that uses the NLLB-200 model for translation and GPT-3 for polishing the translations. It supports multiple languages and can translate text, PDF, Word, and TXT documents.
+My Translation App is a local AI translation software that uses the NLLB-200 model for translation. It supports multiple languages and can translate text, PDF, Word, and TXT documents.
 
 ## Features
 
