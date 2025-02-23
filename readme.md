@@ -24,3 +24,15 @@ My Translation App is a local AI translation software that uses the NLLB-200 mod
    ```bash
    python my_translation_app.py
    ```
+4. How to use translate:
+    - open the text you want to translate (support text, PDF, Word, and TXT documents and broswer)
+    - Select the source and target languages
+    - Click the translate button
+    - The translation will appear in the translation bubble
+    - Use your mouse wheel to adjust the font size of the translation bubble
+    - Click the copy button (ctrl + c) to copy the translation to the clipboard
+5. How to use file translate:
+    - Click the file translate button
+    - Select the file you want to translate
+    - Select the source and target languages
+    - Select the file it will automatically translate and save the file in the same directory
