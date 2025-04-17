@@ -49,8 +49,17 @@ def translate_text(texts, src_lang="auto", tgt_lang="zho_Hans"):
 
     # Auto-detect source language
     if src_lang == "auto":
-        detected_lang = detect(texts[0])
-        src_lang = next((code for name, code in languages.items() if detected_lang in code.lower()), "eng_Latn")
+        # Join some text samples for better detection
+        sample_text = " ".join([t for t in texts[:10] if t.strip()])
+        if len(sample_text) <= 1:  # If still too short, just use a default
+            src_lang = "eng_Latn"
+        else:
+            try:
+                detected_lang = detect(sample_text)
+                src_lang = next((code for name, code in languages.items() if detected_lang in code.lower()), "eng_Latn")
+            except Exception as e:
+                print(f"Language detection failed: {e}")
+                src_lang = "eng_Latn"  # Default to English if detection fails
 
     # Tokenize input
     inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True).to(device)
@@ -66,7 +75,6 @@ def translate_text(texts, src_lang="auto", tgt_lang="zho_Hans"):
     with torch.no_grad():
         translated = model.generate(**inputs, forced_bos_token_id=tgt_lang_id)
     return [tokenizer.decode(t, skip_special_tokens=True) for t in translated]
-
 
 # Extract text and layout from PDF
 def extract_pdf_content(file_path):
@@ -86,27 +94,89 @@ def extract_pdf_content(file_path):
 
 # Generate translated PDF
 def translate_pdf_document(file_path, src_lang, tgt_lang, progress_callback=None, stop_flag=None):
-    content = extract_pdf_content(file_path)
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Register Microsoft YaHei font
+    try:
+        # Check if we're running from PyInstaller bundle
+        import sys
+        if getattr(sys, 'frozen', False):
+            # If running as bundled exe
+            import os
+            font_path = os.path.join('msyh.ttf')
+        else:
+            # If running in normal Python environment
+            font_path = 'msyh.ttf'
+
+        pdfmetrics.registerFont(TTFont('MicrosoftYaHei', font_path))
+        font_name = 'MicrosoftYaHei'
+    except Exception as e:
+        print(f"Font registration error: {e}")
+        # Fallback to built-in fonts
+        try:
+            from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+            pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+            font_name = 'STSong-Light'
+        except:
+            font_name = 'Helvetica'
+            print("Warning: No CJK fonts available. Text may appear garbled.")
+
+    # Group PDF content by lines for better translation
+    with pdfplumber.open(file_path) as pdf:
+        content_by_page = []
+        for page_num, page in enumerate(pdf.pages):
+            # Group by y-position to form lines
+            lines = {}
+            for char in page.chars:
+                # Round y position to group nearby text
+                y_key = round(char["y0"])
+                if y_key not in lines:
+                    lines[y_key] = {"text": "", "x": char["x0"], "y": A4[1] - char["y0"], "size": char["size"],
+                                    "page": page_num}
+                lines[y_key]["text"] += char["text"]
+
+            # Add lines to content
+            content_by_page.extend(sorted(lines.values(), key=lambda x: (x["page"], -x["y"])))
+
     translated_file = file_path.rsplit(".", 1)[0] + "_translated.pdf"
     c = canvas.Canvas(translated_file, pagesize=A4)
-    total = len(content)
+    total = len(content_by_page)
 
     current_page = 0
-    c.showPage()
-    batch_size = 32
+    c.showPage()  # Start with a blank page
+    batch_size = 10  # Process fewer items but with more text per item
+
     for i in range(0, total, batch_size):
         if stop_flag and stop_flag.is_set():
             c.save()
             return "翻译已停止"
-        batch = content[i:i + batch_size]
+
+        batch = content_by_page[i:i + batch_size]
         texts = [item["text"] for item in batch]
-        translated_texts = translate_text(texts, src_lang, tgt_lang)
+
+        # Only translate non-empty texts
+        valid_indices = [idx for idx, text in enumerate(texts) if text.strip()]
+        if valid_indices:
+            valid_texts = [texts[idx] for idx in valid_indices]
+            translated_valid = translate_text(valid_texts, src_lang, tgt_lang)
+
+            # Put translated texts back in the right positions
+            translated_texts = texts.copy()
+            for valid_idx, trans_text in zip(valid_indices, translated_valid):
+                translated_texts[valid_idx] = trans_text
+        else:
+            translated_texts = texts
+
         for idx, item in enumerate(batch):
             if item["page"] != current_page:
                 c.showPage()
                 current_page = item["page"]
-            c.setFont("Helvetica", item["size"])
-            c.drawString(item["x"], item["y"], translated_texts[idx])
+
+            if translated_texts[idx].strip():  # Only draw non-empty text
+                c.setFont(font_name, item["size"])
+                c.drawString(item["x"], item["y"], translated_texts[idx])
+
         if progress_callback:
             progress_callback((i + len(batch)) / total * 100)
 
